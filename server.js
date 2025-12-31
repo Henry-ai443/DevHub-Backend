@@ -5,11 +5,18 @@ const pool = require('./config/db');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+//IMPORTS
+const authRoutes = require('./routes/authroutes');
+
 app.use(express.json());
+
+//ENPOINTS
+app.use('/api/auth', authRoutes);
+
 
 async function startServer() {
   try {
-    // Test DB connection
+
     const connection = await pool.getConnection();
     await connection.ping();
     connection.release();
