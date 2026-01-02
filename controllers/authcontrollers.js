@@ -1,13 +1,14 @@
-// controllers/authController.js
-
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
+
+
 const SALT_ROUNDS = 10;
 
+
 /**
- * SIGNUP
+ * SIMPLE SIGNUP
  */
 exports.signup = async (req, res) => {
   try {
@@ -17,23 +18,37 @@ exports.signup = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
+    // Hash password
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-    await pool.query(
+    const [result] = await pool.query(
       `INSERT INTO users (email, password_hash, role)
        VALUES (?, ?, ?)`,
       [email, passwordHash, role || 'CLIENT']
     );
 
-    return res.status(201).json({ message: 'User created successfully' });
+    const userId = result.insertId;
+
+    const token = jwt.sign(
+      { userId, role: role || 'CLIENT' },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN }
+    );
+
+    return res.status(201).json({
+      message: 'User created successfully',
+      token
+    });
 
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ message: 'Email already exists' });
     }
+    console.error(err);
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 /**
  * LOGIN
@@ -75,9 +90,14 @@ exports.login = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
 
-    return res.json({ token });
+    return res.json({ 
+      message:'Login Successfull',
+      'token':token
+     });
 
   } catch (err) {
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
+
