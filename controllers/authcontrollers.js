@@ -17,8 +17,7 @@ exports.signup = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
     }
-
-    // Hash password
+    
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     const [result] = await pool.query(

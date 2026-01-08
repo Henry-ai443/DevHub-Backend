@@ -8,12 +8,14 @@ const PORT = process.env.PORT || 5000;
 
 //IMPORTS
 const authRoutes = require('./routes/authroutes');
+const profileRoutes = require('./routes/profile.routes');
 
 app.use(express.json());
 app.use(cors())
 
 //ENPOINTS
 app.use('/api/auth', authRoutes);
+app.use('/api/profile', profileRoutes);
 
 
 async function startServer() {
