@@ -1,120 +1,146 @@
-const pool = require('../config/db');
-const cloudinary = require('../config/cloudinary');
+const ProfileService = require('../services/profileService');
+const { asyncHandler } = require('../utils/errorHandler');
 const fetch = require('node-fetch');
-
-
-
-exports.getMyProfile = async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    const [rows] = await pool.query(
-      `
-      SELECT 
-        p.id,
-        p.first_name,
-        p.last_name,
-        p.bio,
-        p.avatar_url,
-        p.website_url,
-        p.skills,
-        p.company_name,
-        p.created_at,
-        p.updated_at
-      FROM profiles p
-      WHERE p.user_id = ?
-      `,
-      [userId]
-    );
-
-    if (rows.length === 0) {
-      return res.json({ profile: null });
-    }
-
-    return res.json({ profile: rows[0] });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error' });
-  }
-};
-
+const cloudinary = require('../config/cloudinary');
 
 /**
- * CREATE OR UPDATE PROFILE
+ * GET /api/profile/me
+ * Get current user's profile
  */
-
-exports.upsertProfile = async (req, res) => {
+exports.getMyProfile = asyncHandler(async (req, res) => {
   const userId = req.user.userId;
 
-  const {
-    first_name,
-    last_name,
-    bio,
-    website_url,
-    skills,
-    company_name,
-  } = req.body;
+  // Determine if user is developer or client
+  const { role } = req.user;
 
-  let avatarUrl = null;
-
-  try {
-    // 1️⃣ User uploaded avatar
-    if (req.file) {
-      avatarUrl = req.file.path; // Cloudinary URL from multer
-    } else {
-      // 2️⃣ Generate DiceBear avatar if no upload
-      const seed = userId;
-      const avatarApiUrl = `https://api.dicebear.com/7.x/identicon/png?seed=${seed}`;
-
-      const response = await fetch(avatarApiUrl);
-      const buffer = await response.buffer();
-
-      const uploadResult = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
-          { folder: 'avatars' },
-          (error, result) => {
-            if (error) reject(error);
-            else resolve(result);
-          }
-        ).end(buffer);
-      });
-
-      avatarUrl = uploadResult.secure_url;
-    }
-
-    // 3️⃣ Insert or update profile
-    await pool.query(
-      `
-      INSERT INTO profiles (
-        user_id, first_name, last_name, bio, avatar_url, website_url, skills, company_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        first_name = VALUES(first_name),
-        last_name = VALUES(last_name),
-        bio = VALUES(bio),
-        avatar_url = VALUES(avatar_url),
-        website_url = VALUES(website_url),
-        skills = VALUES(skills),
-        company_name = VALUES(company_name),
-        updated_at = CURRENT_TIMESTAMP
-      `,
-      [
-        userId,
-        first_name,
-        last_name,
-        bio,
-        avatarUrl,
-        website_url,
-        skills,
-        company_name
-      ]
-    );
-
-    return res.json({ message: 'Profile saved successfully', avatarUrl });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error' });
+  let profile;
+  if (role === 'developer') {
+    profile = await ProfileService.getDeveloperProfile(userId);
+  } else if (role === 'client') {
+    profile = await ProfileService.getClientProfile(userId);
+  } else {
+    return res.status(400).json({ success: false, message: 'Invalid user role' });
   }
-};
+
+  res.json({
+    success: true,
+    data: profile,
+  });
+});
+
+/**
+ * GET /api/profile/developer/:developerId
+ * Get public developer profile
+ */
+exports.getDeveloperProfile = asyncHandler(async (req, res) => {
+  const { developerId } = req.params;
+
+  const profile = await ProfileService.getDeveloperProfile(developerId);
+
+  // Only allow viewing if public (unless it's the owner or admin)
+  if (
+    profile.visibility === 'hidden' &&
+    req.user?.userId !== developerId &&
+    req.user?.role !== 'admin'
+  ) {
+    return res.status(403).json({ success: false, message: 'Profile is private' });
+  }
+
+  res.json({
+    success: true,
+    data: profile,
+  });
+});
+
+/**
+ * PUT /api/profile/me/developer
+ * Update developer profile
+ */
+exports.updateDeveloperProfile = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const data = req.body;
+
+  // Handle avatar upload
+  if (req.file) {
+    data.avatarUrl = req.file.path; // Cloudinary URL from multer
+  } else if (data.generateAvatar) {
+    // Generate DiceBear avatar if requested
+    const avatarApiUrl = `https://api.dicebear.com/7.x/identicon/png?seed=${userId}`;
+    const response = await fetch(avatarApiUrl);
+    const buffer = await response.buffer();
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'avatars' },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(buffer);
+    });
+
+    data.avatarUrl = uploadResult.secure_url;
+  }
+
+  const profile = await ProfileService.updateDeveloperProfile(userId, data);
+
+  res.json({
+    success: true,
+    message: 'Profile updated successfully',
+    data: profile,
+  });
+});
+
+/**
+ * PUT /api/profile/me/client
+ * Update client profile
+ */
+exports.updateClientProfile = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const data = req.body;
+
+  const profile = await ProfileService.updateClientProfile(userId, data);
+
+  res.json({
+    success: true,
+    message: 'Profile updated successfully',
+    data: profile,
+  });
+});
+
+/**
+ * GET /api/profile/developers/browse
+ * Browse public developer profiles with filters
+ */
+exports.browseDevelopers = asyncHandler(async (req, res) => {
+  const filters = {};
+  const pagination = {
+    page: parseInt(req.query.page) || 1,
+    limit: parseInt(req.query.limit) || 20,
+  };
+
+  // Apply filters
+  if (req.query.skills) {
+    filters.skills = req.query.skills.split(',');
+  }
+  if (req.query.experienceLevel) {
+    filters.experienceLevel = req.query.experienceLevel;
+  }
+  if (req.query.isRemote !== undefined) {
+    filters.isRemote = req.query.isRemote === 'true';
+  }
+  if (req.query.minRate) {
+    filters.minRate = parseInt(req.query.minRate);
+  }
+  if (req.query.maxRate) {
+    filters.maxRate = parseInt(req.query.maxRate);
+  }
+
+  const result = await ProfileService.browseDevelopers(filters, pagination);
+
+  res.json({
+    success: true,
+    data: result.profiles,
+    pagination: result.pagination,
+  });
+});
